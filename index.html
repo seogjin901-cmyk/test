@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Tetris+ 완성판</title>
+<style>
+  body {
+    background: #111;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    color: white;
+    font-family: monospace;
+  }
+  #game-container {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+  }
+  canvas {
+    background: #000;
+    border: 2px solid #fff;
+  }
+  h3, h2 {
+    text-align: center;
+    margin: 5px 0;
+  }
+</style>
+</head>
+<body>
+
+<div id="game-container">
+  <!-- LEFT: HOLD -->
+  <div>
+    <h3>HOLD</h3>
+    <canvas id="hold" width="120" height="120"></canvas>
+  </div>
+
+  <!-- CENTER: GAME -->
+  <div>
+    <h2>점수: <span id="score">0</span></h2>
+    <h3>블록 점수: <span id="pieceScore">50</span></h3>
+    <canvas id="tetris" width="240" height="400"></canvas>
+  </div>
+
+  <!-- RIGHT: NEXT -->
+  <div>
+    <h3>NEXT</h3>
+    <canvas id="next" width="120" height="120"></canvas>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById("tetris");
+const ctx = canvas.getContext("2d");
+const holdCanvas = document.getElementById("hold");
+const holdCtx = holdCanvas.getContext("2d");
+const nextCanvas = document.getElementById("next");
+const nextCtx = nextCanvas.getContext("2d");
+const scoreEl = document.getElementById("score");
+const pieceScoreEl = document.getElementById("pieceScore");
+
+const COLS = 12, ROWS = 20, BLOCK = 20;
+ctx.scale(BLOCK, BLOCK);
+
+const colors = [
+  null,"#00f0f0","#0000f0","#f0a000","#f0f000","#00f000","#a000f0","#f00000"
+];
+const pieces = "IJLOSTZ";
+
+function createMatrix(w,h){ return Array.from({length:h},()=>Array(w).fill(0)); }
+function createPiece(type){
+  if(type==="T")return [[0,1,0],[1,1,1],[0,0,0]];
+  if(type==="O")return [[2,2],[2,2]];
+  if(type==="L")return [[0,0,3],[3,3,3],[0,0,0]];
+  if(type==="J")return [[4,0,0],[4,4,4],[0,0,0]];
+  if(type==="I")return [[0,0,0,0],[5,5,5,5],[0,0,0,0],[0,0,0,0]];
+  if(type==="S")return [[0,6,6],[6,6,0],[0,0,0]];
+  if(type==="Z")return [[7,7,0],[0,7,7],[0,0,0]];
+}
+
+const arena = createMatrix(COLS,ROWS);
+const player = { pos:{x:0,y:0}, matrix:null, hold:null, canHold:true, score:0, pieceScore:50, speed:1000, nextSpeedUp:1000 };
+let nextPiece = createPiece(pieces[Math.floor(Math.random()*pieces.length)]);
+
+function drawBlock(context,x,y,value,scale=1){
+  context.fillStyle = colors[value];
+  context.fillRect(x,y,scale,scale);
+  // 겉 윤곽선
+  context.strokeStyle="#000"; context.lineWidth=0.05*scale;
+  context.strokeRect(x,y,scale,scale);
+  // 내부 얇은 점선
+  context.strokeStyle="rgba(255,255,255,0.15)";
+  context.lineWidth=0.01*scale;
+  context.setLineDash([0.05*scale,0.05*scale]);
+  context.strokeRect(x+0.05*scale, y+0.05*scale, scale*0.9, scale*0.9);
+  context.setLineDash([]);
+}
+
+function drawMatrix(matrix, offset, context=ctx){
+  matrix.forEach((row,y)=>{
+    row.forEach((value,x)=>{
+      if(value!==0) drawBlock(context,x+offset.x,y+offset.y,value);
+    });
+  });
+}
+
+function drawMatrixCentered(context,matrix,canvasSize){
+  context.clearRect(0,0,canvasSize.width,canvasSize.height);
+  const scale = canvasSize.width/4;
+  const offsetX = (canvasSize.width - matrix[0].length*scale)/2;
+  const offsetY = (canvasSize.height - matrix.length*scale)/2;
+  matrix.forEach((row,y)=>{
+    row.forEach((value,x)=>{
+      if(value!==0) drawBlock(context, offsetX+x*scale, offsetY+y*scale, value, scale);
+    });
+  });
+}
+
+function drawHoldPiece(){ drawMatrixCentered(holdCtx, player.hold||[[0]], holdCanvas); }
+function drawNextPiece(){ drawMatrixCentered(nextCtx, nextPiece, nextCanvas); }
+
+function draw(){
+  ctx.fillStyle="#000"; ctx.fillRect(0,0,COLS,ROWS);
+  drawMatrix(arena,{x:0,y:0});
+  drawMatrix(player.matrix,player.pos);
+}
+
+function collide(arena,player){
+  const m=player.matrix, o=player.pos;
+  for(let y=0;y<m.length;y++)
+    for(let x=0;x<m[y].length;x++)
+      if(m[y][x]!==0 && (arena[y+o.y] && arena[y+o.y][x+o.x])!==0) return true;
+  return false;
+}
+
+function merge(arena,player){
+  player.matrix.forEach((row,y)=>row.forEach((value,x)=>{ if(value!==0) arena[y+player.pos.y][x+player.pos.x]=value; }));
+  addPieceScore();
+  arenaSweep();
+}
+
+function addPieceScore(){
+  player.score += player.pieceScore;
+  scoreEl.textContent = player.score;
+  if(player.score >= player.nextSpeedUp){
+    player.speed = Math.max(100, player.speed-100);
+    player.pieceScore +=20;
+    player.nextSpeedUp+=1000;
+    pieceScoreEl.textContent = player.pieceScore;
+  }
+}
+
+function arenaSweep(){
+  let rowCount=0;
+  outer: for(let y=ROWS-1;y>=0;y--){
+    for(let x=0;x<COLS;x++) if(arena[y][x]===0) continue outer;
+    arena.splice(y,1); arena.unshift(Array(COLS).fill(0)); rowCount++; y++;
+  }
+  if(rowCount>0){
+    player.score+=100*rowCount;
+    scoreEl.textContent=player.score;
+  }
+}
+
+function playerDrop(){
+  player.pos.y++;
+  if(collide(arena,player)){
+    player.pos.y--; merge(arena,player); playerReset(); player.canHold=true;
+  }
+}
+
+function hardDrop(){ while(!collide(arena,player)) player.pos.y++; player.pos.y--; merge(arena,player); playerReset(); player.canHold=true; }
+
+function playerMove(dir){ player.pos.x+=dir; if(collide(arena,player)) player.pos.x-=dir; }
+
+function playerHold(){
+  if(!player.canHold) return;
+  if(!player.hold){ player.hold=player.matrix; playerReset(); }
+  else{ [player.matrix,player.hold]=[player.hold,player.matrix]; player.pos.y=0; }
+  player.canHold=false; drawHoldPiece();
+}
+
+function playerReset(){
+  player.matrix = nextPiece;
+  player.pos.y=0;
+  player.pos.x = (COLS/2 |0) - (player.matrix[0].length/2|0);
+  nextPiece = createPiece(pieces[Math.floor(Math.random()*pieces.length)]);
+  drawNextPiece();
+  if(collide(arena,player)){
+    arena.forEach(row=>row.fill(0));
+    player.score=0; player.pieceScore=50; player.speed=1000; player.nextSpeedUp=1000;
+    scoreEl.textContent=0; pieceScoreEl.textContent=50;
+  }
+}
+
+function rotate(matrix){
+  for(let y=0;y<matrix.length;y++) for(let x=0;x<y;x++) [matrix[x][y],matrix[y][x]]=[matrix[y][x],matrix[x][y]];
+  matrix.forEach(row=>row.reverse());
+}
+
+document.addEventListener("keydown", e=>{
+  if(e.key==="ArrowLeft") playerMove(-1);
+  if(e.key==="ArrowRight") playerMove(1);
+  if(e.key==="ArrowDown") playerDrop();
+  if(e.key==="ArrowUp") rotate(player.matrix);
+  if(e.key==="Enter") playerHold();
+  if(e.key===" ") hardDrop();
+});
+
+let lastTime=0;
+function update(time=0){
+  if(time-lastTime>player.speed){ playerDrop(); lastTime=time; }
+  draw();
+  requestAnimationFrame(update);
+}
+
+playerReset(); drawHoldPiece(); drawNextPiece(); update();
+</script>
+
+</body>
+</html>
